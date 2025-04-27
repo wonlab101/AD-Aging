@@ -1,0 +1,602 @@
+---
+title: "01.Gene prioritization"
+output: heatmap
+---
+-Project: AD-Aging GBS
+-Date: 250222
+
+
+
+###Library
+```{r}
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(tidyr)          
+library(stringr)
+library(extrafont)
+library(ggpubr)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+library(ggrepel) 
+library(ggbreak)
+
+
+font_import()
+loadfonts()
+```
+
+```{r}
+output_path="~/Library/Mobile Documents/com~apple~CloudDocs/Desktop/SKKU/Projects_SKKU/AD_Aging/02.gene_prioritization/"
+```
+
+```{r}
+theme_step1 <- function(base_size = 11, base_family = "",
+                        base_line_size = base_size / 22,
+                        base_rect_size = base_size / 22) {
+  theme(title = element_text(family = 'Arial', size = 18, color = 'black'), text = element_text(family = 'Arial', size = 16, color = 'black'),
+        axis.title = element_text(family = 'Arial', size = 18, color = 'black'), axis.text = element_text(family = 'Arial', size = 16, color = 'black'), 
+        panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+        panel.background = element_rect(fill = "white", colour = NA), axis.line = element_line(colour = "black", size = rel(1)),
+        legend.background = element_rect(color = 'black'), legend.title = element_text(family = 'Arial', size = 16),
+        legend.text = element_text(family = 'Arial', size = 14),
+        legend.direction = "vertical", 
+        legend.box = c("horizontal", "vertical"),
+        legend.spacing.x = unit(0.1, 'cm'),
+        plot.margin = unit(c(0.25, 1, 1, 0.5), 'cm'),
+        axis.title.y = element_text(margin = margin(r = 10, unit = "pt")))
+}
+
+```
+
+
+#01. AD-linked Aging
+# import data
+```{r}
+fn_mappedGenes <- "~/Library/Mobile Documents/com~apple~CloudDocs/Desktop/SKKU/Projects_SKKU/AD_Aging/02.gene_prioritization/FUMA/FUMA_sharedAging_job586471/genes.txt"
+df_mappedGenes <- read.table(fn_mappedGenes, header = 1)
+
+fn_GenomicLocus <- "~/Library/Mobile Documents/com~apple~CloudDocs/Desktop/SKKU/Projects_SKKU/AD_Aging/02.gene_prioritization/FUMA/FUMA_sharedAging_job586471/GenomicRiskLoci.txt"
+df_GenomicLocus <- read.table(fn_GenomicLocus, header = 1)
+
+fn_snps <- "~/Library/Mobile Documents/com~apple~CloudDocs/Desktop/SKKU/Projects_SKKU/AD_Aging/02.gene_prioritization/FUMA/FUMA_sharedAging_job586471/snps.txt"
+df_snps <- read.table(fn_snps, header = 1)
+
+#Add Nearest genes
+df_GenomicLocus <- merge(df_GenomicLocus, df_snps[, c("rsID", "nearestGene")], by = "rsID", all.x = TRUE)
+df_GenomicLocus_expanded <- df_GenomicLocus %>%
+  separate_rows(nearestGene, sep = ":")
+
+df <- df_mappedGenes %>%
+  mutate(Nearest = ifelse(symbol %in% df_GenomicLocus_expanded$nearestGene, 1, 0))
+
+#split Genomic Locus
+df <- df %>%
+  separate_rows(GenomicLocus, sep = ":")
+
+```
+
+# Data transformation
+```{r}
+df[df == "NA"] <- NA
+
+df <- df %>%
+  mutate(
+    # Convert necessary columns to numeric
+    pLI = as.numeric(pLI),
+    eqtlMapminQ = as.numeric(eqtlMapminQ),
+    GenomicLocus = as.numeric(GenomicLocus),
+
+    
+    # Create new variables based on conditions
+    CADD_20_sig = ifelse(is.na(posMapMaxCADD), NA, ifelse(posMapMaxCADD >= 20, 1, 0)),
+    PLI_09_sig = ifelse(is.na(pLI), NA, ifelse(pLI >= 0.9, 1, 0)),
+    n_eqtlMapts = ifelse(is.na(eqtlMapts), NA, str_count(eqtlMapts, ":") + 1),
+    eQTL_sig = ifelse(is.na(eqtlMapminQ) | is.na(n_eqtlMapts), NA, 
+                      ifelse(eqtlMapminQ < 0.05 & n_eqtlMapts >= 2, 1, 0)),
+    
+    # Create ciMap_sig column based on ciMap values
+    ciMap_sig = ifelse(ciMap == "Yes", 1, 0)
+  )
+
+df <- df %>%
+  mutate(
+    # Create the 'prioritized_genes' column based on conditions
+    prioritized_genes = ifelse(rowSums(select(., Nearest, CADD_20_sig, PLI_09_sig, eQTL_sig, ciMap_sig) == 1) >= 2, 1, 0)
+  )
+
+
+```
+
+
+# Heatmap
+```{r, fig.width= 15, fig.height= 5}
+# Step 1: Filter the data for prioritized genes and include GenomicLocus
+df_heatmap <- df %>%
+  filter(prioritized_genes == 1) %>%
+  select(symbol, CADD_20_sig, PLI_09_sig, eQTL_sig, ciMap_sig, Nearest, GenomicLocus)
+
+# Step 2: Rename the columns in df_heatmap
+df_heatmap <- df_heatmap %>%
+  rename(
+    CADD = CADD_20_sig,
+    pLI = PLI_09_sig,
+    eQTL = eQTL_sig,
+    "Chromatin interaction" = ciMap_sig,
+    "Nearest genes" = Nearest
+  ) 
+
+# Step 3: Reshape the data to long format
+df_heatmap_long <- df_heatmap %>%
+  pivot_longer(cols = c(CADD, pLI, eQTL, "Chromatin interaction", "Nearest genes"), 
+               names_to = "Variable", values_to = "Value")
+
+# Step 4: Reorder the levels of the 'Variable' column
+df_heatmap_long$Variable <- factor(df_heatmap_long$Variable, 
+                                   levels = c("Chromatin interaction","eQTL",  "pLI","CADD", "Nearest genes"))
+
+# Step 5: Add a new 'Group' column based on the 'Variable' column
+df_heatmap_long <- df_heatmap_long %>%
+  mutate(Group = case_when(
+    Variable %in% c("pLI", "CADD", "Nearest genes") ~ "Annotation",
+    Variable %in% c("Chromatin interaction", "eQTL") ~ "Regulation",
+    TRUE ~ "Other"  # You can adjust this if there are more categories
+  ))
+
+# Step 6: update Regulation value
+df_heatmap_long <- df_heatmap_long %>%
+  mutate(Value = ifelse(Group == "Regulation" & Value == 1, 2, Value))
+
+```
+
+
+```{r, fig.width= 18, fig.height= 5}
+
+# Step 7: Create the heatmap
+supp_fig1 <- ggplot(df_heatmap_long, aes(x = symbol, y = Variable, fill = factor(Value))) + 
+  geom_tile(color = "lightgrey", size = 0.1, width = 0.9, height = 0.9) +  # Adjust size for padding inside each tile
+  scale_fill_manual(
+    values = c("0" = "white", "1" = "#F6A5A0", "2" = "#F48C6B"),  # Specify colors for 0 and 1 values
+    na.value = "white",  # Explicitly set NA values to white
+    name = "Value"
+  ) + 
+  theme_classic() + 
+  facet_grid(Group ~ GenomicLocus, scales = "free", space = "free") +  # Adjust facets for GenomicLocus
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12), # Set x-axis text angle to 45 degrees
+    axis.text.y = element_text(size = 14), # Increase y-axis text size
+    axis.title.x = element_text(size = 14, face = "bold"), # Increase x-axis title size
+    axis.title.y = element_text(size = 14, face = "bold"), # Increase y-axis title size
+    plot.title = element_text(size = 20, face = "bold", hjust = 0.5), # Increase title size and center align
+    strip.text.y = element_text(angle = 90, size = 14), # Increase facet text size
+    panel.spacing = unit(0.5, "lines"),
+    legend.position = "none"  # Remove the legend
+  ) + 
+  labs(
+    title = "Shared aging",
+    x = "Prioritized genes",
+    y = "Category"
+  )+
+  theme_step1()
+
+# Step 8: Print the heatmap
+print(supp_fig1)
+```
+
+
+#Save fig and table
+
+```{r}
+ggsave(
+  filename = paste0(output_path, "supp_heatmap_plot_gene_prioritization_sharedAging.pdf"), 
+  plot = supp_fig1, 
+  width = 18, 
+  height = 5, 
+  units = "in"  # Specify units as inches
+)
+
+# Save the data as a tab-delimited file
+write.table(
+  df_heatmap, 
+  file = paste0(output_path, "merged_onlyGene_prioritiztion_sharedAging.txt"), 
+  sep = "\t",  # Use tab as the delimiter
+  row.names = FALSE,  # Don't include row names
+  col.names = TRUE,   # Include column names
+  quote = FALSE       # Don't quote the character strings
+)
+```
+
+
+#02. unique AD
+
+# import data
+```{r}
+
+fn_mappedGenes <- "~/Library/Mobile Documents/com~apple~CloudDocs/Desktop/SKKU/Projects_SKKU/AD_Aging/02.gene_prioritization/FUMA/FUMA_uniqueAD_job586487/genes.txt"
+df_mappedGenes <- read.table(fn_mappedGenes, header = 1)
+
+fn_GenomicLocus <- "~/Library/Mobile Documents/com~apple~CloudDocs/Desktop/SKKU/Projects_SKKU/AD_Aging/02.gene_prioritization/FUMA/FUMA_uniqueAD_job586487/GenomicRiskLoci.txt"
+df_GenomicLocus <- read.table(fn_GenomicLocus, header = 1)
+
+fn_snps <- "~/Library/Mobile Documents/com~apple~CloudDocs/Desktop/SKKU/Projects_SKKU/AD_Aging/02.gene_prioritization/FUMA/FUMA_uniqueAD_job586487/snps.txt"
+df_snps <- read.table(fn_snps, header = 1)
+
+#Add Nearest genes
+df_GenomicLocus <- merge(df_GenomicLocus, df_snps[, c("rsID", "nearestGene")], by = "rsID", all.x = TRUE)
+df_GenomicLocus_expanded <- df_GenomicLocus %>%
+  separate_rows(nearestGene, sep = ":")
+
+df <- df_mappedGenes %>%
+  mutate(Nearest = ifelse(symbol %in% df_GenomicLocus_expanded$nearestGene, 1, 0))
+
+#split Genomic Locus
+df <- df %>%
+  separate_rows(GenomicLocus, sep = ":")
+
+
+```
+
+# Data transformation
+```{r}
+df[df == "NA"] <- NA
+
+df <- df %>%
+  mutate(
+    # Convert necessary columns to numeric
+    pLI = as.numeric(pLI),
+    eqtlMapminQ = as.numeric(eqtlMapminQ),
+    GenomicLocus = as.numeric(GenomicLocus),
+    
+    # Create new variables based on conditions
+    CADD_20_sig = ifelse(is.na(posMapMaxCADD), NA, ifelse(posMapMaxCADD >= 20, 1, 0)),
+    PLI_09_sig = ifelse(is.na(pLI), NA, ifelse(pLI >= 0.9, 1, 0)),
+    n_eqtlMapts = ifelse(is.na(eqtlMapts), NA, str_count(eqtlMapts, ":") + 1),
+    eQTL_sig = ifelse(is.na(eqtlMapminQ) | is.na(n_eqtlMapts), NA, 
+                      ifelse(eqtlMapminQ < 0.05 & n_eqtlMapts >= 2, 1, 0)),
+    
+    # Create ciMap_sig column based on ciMap values
+    ciMap_sig = ifelse(ciMap == "Yes", 1, 0)
+  )
+
+df <- df %>%
+  mutate(
+    # Create the 'prioritized_genes' column based on conditions
+    prioritized_genes = ifelse(rowSums(select(., Nearest, CADD_20_sig, PLI_09_sig, eQTL_sig, ciMap_sig) == 1) >= 2, 1, 0)
+  )
+
+
+```
+
+
+# Heatmap
+```{r, fig.width= 15, fig.height= 5}
+# Step 1: Filter the data for prioritized genes and include GenomicLocus
+df_heatmap <- df %>%
+  filter(prioritized_genes == 1) %>%
+  select(symbol, CADD_20_sig, PLI_09_sig, eQTL_sig, ciMap_sig, Nearest, GenomicLocus)
+
+# Step 2: Rename the columns in df_heatmap
+df_heatmap <- df_heatmap %>%
+  rename(
+    CADD = CADD_20_sig,
+    pLI = PLI_09_sig,
+    eQTL = eQTL_sig,
+    "Chromatin interaction" = ciMap_sig,
+    "Nearest genes" = Nearest
+  ) 
+
+# Step 3: Reshape the data to long format
+df_heatmap_long <- df_heatmap %>%
+  pivot_longer(cols = c(CADD, pLI, eQTL, "Chromatin interaction", "Nearest genes"), 
+               names_to = "Variable", values_to = "Value")
+
+# Step 4: Reorder the levels of the 'Variable' column
+df_heatmap_long$Variable <- factor(df_heatmap_long$Variable, 
+                                   levels = c("Chromatin interaction","eQTL",  "pLI","CADD", "Nearest genes"))
+
+
+# Step 5: Add a new 'Group' column based on the 'Variable' column
+df_heatmap_long <- df_heatmap_long %>%
+  mutate(Group = case_when(
+    Variable %in% c("pLI", "CADD", "Nearest genes") ~ "Annotation",
+    Variable %in% c("Chromatin interaction", "eQTL") ~ "Regulation",
+    TRUE ~ "Other"  # You can adjust this if there are more categories
+  ))
+
+# Step 6: update Regulation value
+df_heatmap_long <- df_heatmap_long %>%
+  mutate(Value = ifelse(Group == "Regulation" & Value == 1, 2, Value))
+
+```
+
+```{r, fig.width= 18, fig.height= 5}
+
+# Step 7: Create the heatmap
+supp_fig2 <- ggplot(df_heatmap_long, aes(x = symbol, y = Variable, fill = factor(Value))) + 
+  geom_tile(color = "lightgrey", size = 0.1, width = 0.9, height = 0.9) +  # Adjust size for padding inside each tile
+  scale_fill_manual(
+    values = c("0" = "white", "1" = "#F6A5A0", "2" = "#F48C6B"),  # Specify colors for 0 and 1 values
+    na.value = "white",  # Explicitly set NA values to white
+    name = "Value"
+  ) + 
+  theme_classic() + 
+  facet_grid(Group ~ GenomicLocus, scales = "free", space = "free") +  # Adjust facets for GenomicLocus
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12), # Set x-axis text angle to 45 degrees
+    axis.text.y = element_text(size = 14), # Increase y-axis text size
+    axis.title.x = element_text(size = 14, face = "bold"), # Increase x-axis title size
+    axis.title.y = element_text(size = 14, face = "bold"), # Increase y-axis title size
+    plot.title = element_text(size = 20, face = "bold", hjust = 0.5), # Increase title size and center align
+    strip.text.y = element_text(angle = 90, size = 14), # Increase facet text size
+    panel.spacing = unit(0.5, "lines"),
+    legend.position = "none"  # Remove the legend
+  ) + 
+  labs(
+    title = "Unique AD",
+    x = "Prioritized genes",
+    y = "Category"
+  )+
+  theme_step1()
+
+
+# Step 8: Print the heatmap
+print(supp_fig2)
+```
+
+#Save fig and table
+
+```{r}
+ggsave(
+  filename = paste0(output_path, "supp_heatmap_plot_gene_prioritization_uniqueAD.pdf"), 
+  plot = supp_fig1, 
+  width = 18, 
+  height = 5, 
+  units = "in"  # Specify units as inches
+)
+
+# Save the data as a tab-delimited file
+write.table(
+  df_heatmap, 
+  file = paste0(output_path, "merged_onlyGene_prioritiztion_uniqueAD.txt"), 
+  sep = "\t",  # Use tab as the delimiter
+  row.names = FALSE,  # Don't include row names
+  col.names = TRUE,   # Include column names
+  quote = FALSE       # Don't quote the character strings
+)
+```
+
+
+#03. Pathway analysis
+### 03.1. all genes
+```{r}
+df_sharedAging <- read.table(paste0(output_path, "merged_onlyGene_prioritiztion_sharedAging.txt"), header = 1, sep = "\t")
+df_uniqueAD <- read.table(paste0(output_path, "merged_onlyGene_prioritiztion_uniqueAD.txt"), header = 1, sep = "\t")
+
+genes_sharedAging <- df_sharedAging$symbol
+genes_uniqueAD <- df_uniqueAD$symbol
+
+entrez_sharedAging <- bitr(genes_sharedAging, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+entrez_uniqueAD <- bitr(genes_uniqueAD, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+
+
+
+```
+
+```{r}
+# GO enrichment analysis for SharedAging
+go_results_sharedAging <- enrichGO(
+    gene = entrez_sharedAging$ENTREZID,  # Entrez gene IDs for SharedAging
+    OrgDb = org.Hs.eg.db,                # Human organism database
+    ont = "ALL",                         # GO ontology types: BP (Biological Process), MF (Molecular Function), CC (Cellular Component)
+    pAdjustMethod = "BH",                # Benjamini-Hochberg correction for multiple testing
+    qvalueCutoff = 0.05,                 # Significance threshold for q-value
+    readable = TRUE                      # Make results readable (convert Entrez IDs to Gene names)
+)
+
+# GO enrichment analysis for UniqueAD
+go_results_uniqueAD <- enrichGO(
+    gene = entrez_uniqueAD$ENTREZID,    # Entrez gene IDs for UniqueAD
+    OrgDb = org.Hs.eg.db,               # Human organism database
+    ont = "ALL",                        # GO ontology types
+    pAdjustMethod = "BH",               # Multiple testing correction
+    qvalueCutoff = 0.05,                # Q-value threshold
+    readable = TRUE                     # Convert Entrez IDs to Gene names
+)
+```
+
+```{r}
+# First, create the individual plots for SharedAging and UniqueAD (barplot + CNE plot side-by-side)
+# For SharedAging
+fig_sharedAging_dot <- dotplot(go_results_sharedAging, showCategory = 10) +theme_step1()
+fig_sharedAging_bar <- barplot(go_results_sharedAging, showCategory = 10) +theme_step1()
+fig_sharedAging_cne <- cnetplot(go_results_sharedAging, showCategory = 10)
+
+# For UniqueAD
+fig_uniqueAD_dot <- dotplot(go_results_uniqueAD, showCategory = 10) +theme_step1()
+fig_uniqueAD_bar <- barplot(go_results_uniqueAD, showCategory = 10) +theme_step1()
+fig_uniqueAD_cne <- cnetplot(go_results_uniqueAD, showCategory = 10)
+
+# Display the plots
+print(fig_sharedAging_dot)
+print(fig_sharedAging_bar)
+print(fig_sharedAging_cne)
+
+print(fig_uniqueAD_dot)
+print(fig_uniqueAD_bar)
+print(fig_uniqueAD_cne)
+```
+## merging plots
+```{r, fig.width=20, fig.hight=30}
+
+#main figure - gene prioritization & SMR
+combined_fig <- ggarrange(fig1, fig2, labels = c('a','b'),
+                  ncol = 2, font.label = list(size = 28), label.y = 1.01)
+print(combined_fig)
+
+ggsave(paste0(output_path,'/plot/Fig2-1.gene_prioritization.pdf'),combined_fig, device = "pdf", width = 15, height = 7)
+
+
+#supplementary figure - gene prioritization 
+combined_heatmap <- ggarrange(supp_fig1, supp_fig2,  
+                                labels = c('a', 'b'), 
+                                nrow = 2)
+
+ggsave(paste0(output_path,'/plot/Supp_Fig2-1.gene_prioritization.pdf'),combined_heatmap, device = "pdf", width = 18, height = 10)
+
+# Combine SharedAging barplot and CNE plot horizontally
+fig_sharedAging_combined <- ggarrange(fig_sharedAging_bar, fig_sharedAging_cne,
+                                      ncol = 2)
+
+# Add title to SharedAging combined plot
+fig_sharedAging_combined <- annotate_figure(fig_sharedAging_combined, 
+                                            top = text_grob("Shared Aging", size = 16))
+
+# Combine UniqueAD barplot and CNE plot horizontally
+fig_uniqueAD_combined <- ggarrange(fig_uniqueAD_bar, fig_uniqueAD_cne, 
+                                   ncol = 2)
+
+# Add title to UniqueAD combined plot
+fig_uniqueAD_combined <- annotate_figure(fig_uniqueAD_combined, 
+                                         top = text_grob("Unique AD", size = 16))
+
+combined_pathway<- ggarrange(fig_sharedAging_combined, fig_uniqueAD_combined,  
+                                labels = c('a', 'b'), 
+                                ncol = 2)
+
+print(combined_pathway)
+ggsave(paste0(output_path,'/plot/Supp_Fig2-2.gene_prioritization-pathway.pdf'),combined_pathway, device = "pdf", width = 22, height = 5)
+
+```
+
+
+### 04. Volcano plot
+# import SMR data
+```{r}
+# Set the directory path
+directory_path <- "~/Library/Mobile Documents/com~apple~CloudDocs/Desktop/SKKU/Projects_SKKU/AD_Aging/02.gene_prioritization/SMR/UniqueAD_V2_trait_merged_raw"
+
+# List all .tsv files in the directory
+tsv_files <- list.files(path = directory_path, pattern = "\\.tsv$", full.names = TRUE)
+
+
+# Read all the files and combine them into a single data frame
+all_data <- lapply(tsv_files, read.delim) %>%
+  bind_rows()
+
+```
+
+```{r}
+df_sharedAging <- read.table(paste0(output_path, "merged_onlyGene_prioritiztion_sharedAging.txt"), header = 1, sep = "\t")
+df_uniqueAD <- read.table(paste0(output_path, "merged_onlyGene_prioritiztion_uniqueAD.txt"), header = 1, sep = "\t")
+
+df_AD <- read.table("/Users/minyoungcho/Desktop/SKKU/Projects_SKKU/AD_Aging/06.scRNA/gene_prioritization/merged_onlyGene_prioritiztion_AD.txt", header = 1, sep = "\t")
+df_Aging <- read.table("/Users/minyoungcho/Desktop/SKKU/Projects_SKKU/AD_Aging/06.scRNA/gene_prioritization/merged_onlyGene_prioritiztion_Aging.txt", header = 1, sep = "\t")
+
+genes_sharedAging <- df_sharedAging$symbol
+genes_uniqueAD <- df_uniqueAD$symbol
+genes_Aging <- df_Aging$symbol
+genes_AD <- df_AD$symbol
+
+genes_sharedAging_only <- setdiff(genes_sharedAging, genes_Aging)
+genes_uniqueAD_only <- setdiff(genes_uniqueAD, genes_AD)
+
+length(genes_sharedAging_only)
+length(genes_uniqueAD_only)
+```
+
+```{r, fig.width= 10, fig.height= 5}
+
+filtered_plot_data <- all_data %>%
+  filter(Gene %in% genes_sharedAging_only) %>%
+  mutate(bonferroni_p_SMR = p.adjust(p_SMR, method = "bonferroni")) %>%
+  mutate(color = ifelse(bonferroni_p_SMR < 0.05 & p_HEIDI >= 0.05, "red", "black"))
+
+
+x_limit <- max(abs(filtered_plot_data$b_SMR), na.rm = TRUE)  
+
+# Volcano plot 
+p_volcano1 <- ggplot(filtered_plot_data, aes(x = b_SMR, y = -log10(p_SMR), color = color)) +
+  geom_point(size = 3) +
+  scale_color_identity() +  
+  facet_grid(qtl_name~., scales = "free_x") +  
+  labs(
+    x = "SMR Beta", 
+    y = expression(italic(-log[10](p-value))),  
+    title = "SMR of AD-Linked Aging"
+  ) + 
+  geom_text_repel(data = filtered_plot_data %>% filter(bonferroni_p_SMR < 0.05),  
+                  aes(label = Gene), size = 5, color = "red") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray", size = 1) +  
+  scale_x_continuous(limits = c(-x_limit, x_limit)) + 
+  theme_step1() 
+
+print(p_volcano1)
+
+#horizontal
+p_volcano1.2 <- ggplot(filtered_plot_data, aes(x = b_SMR, y = -log10(p_SMR), color = color)) +
+  geom_point(size = 3) +
+  scale_color_identity() +  
+  facet_grid(.~qtl_name, scales = "free_y") +  
+  labs(
+    x = "SMR Beta", 
+    y = expression(italic(-log[10](p-value))),  
+    title = "SMR of AD-Linked Aging"
+  ) + 
+  geom_text_repel(data = filtered_plot_data %>% filter(bonferroni_p_SMR < 0.05),  
+                  aes(label = Gene), size = 5, color = "red") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray", size = 1) +  
+  scale_x_continuous(limits = c(-x_limit, x_limit)) + 
+  theme_step1()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+print(p_volcano1.2)
+
+```
+
+```{r}
+# Save the data as a tab-delimited file
+write.table(
+  filtered_plot_data, 
+  file = paste0(output_path, "SMR_sharedAging_only.250326.txt"), 
+  sep = "\t",  # Use tab as the delimiter
+  row.names = FALSE,  # Don't include row names
+  col.names = TRUE,   # Include column names
+  quote = FALSE       # Don't quote the character strings
+)
+```
+
+```{r, fig.width= 10, fig.height= 4}
+
+filtered_plot_data <- all_data %>%
+  filter(Gene %in% genes_uniqueAD_only) %>%
+  mutate(bonferroni_p_SMR = p.adjust(p_SMR, method = "bonferroni")) %>%
+  mutate(color = ifelse(bonferroni_p_SMR < 0.05 & p_HEIDI >= 0.05, "red", "black"))
+
+x_limit <- max(abs(filtered_plot_data$b_SMR), na.rm = TRUE)  
+
+# Volcano plot 
+p_volcano2_04 <- ggplot(filtered_plot_data, aes(x = b_SMR, y = -log10(p_SMR), color = color)) +
+  geom_point(size = 3) +
+  scale_color_identity() +  
+  facet_grid(qtl_name~., scales = "free_x") +  
+  labs(
+    x = "SMR Beta", 
+    y = expression(italic(-log[10](p-value))),  
+    title = "SMR of Unique AD"
+  ) + 
+  geom_text_repel(data = filtered_plot_data %>% filter(color == "red"),  
+                  aes(label = Gene), size = 5, color = "red") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray", size = 1) +  
+  scale_x_continuous(limits = c(-x_limit, x_limit)) + 
+  theme_step1() 
+
+print(p_volcano2_04)
+
+```
+
+
+```{r}
+ggsave(paste0(output_path,'/plot/Fig4.2.SMR_volcano_uniqueAD_only_0.4.pdf'),p_volcano2_04, device = "pdf", width = 5, height = 10)
+```
+

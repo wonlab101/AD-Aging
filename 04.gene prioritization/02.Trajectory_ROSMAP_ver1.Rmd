@@ -1,0 +1,571 @@
+
+---
+title: "02.Trajectory_cell_proportion_ROSMAP"
+output: UMAP
+---
+-Project: AD-Aging GBS
+-Date: 250224
+
+
+###Library
+```{r}
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(tidyr)          
+library(stringr)
+library(extrafont)
+library(ggpubr)
+library(data.table)
+library(fgsea)
+library(readr)
+library(tools)
+library(grid) 
+library(gridExtra)
+library(stats)
+
+
+font_import()
+loadfonts()
+```
+
+```{r}
+output_path="~/Library/Mobile Documents/com~apple~CloudDocs/Desktop/SKKU/Projects_SKKU/AD_Aging/03.GSEA/"
+```
+
+```{r}
+theme_step1 <- function(base_size = 11, base_family = "",
+                        base_line_size = base_size / 22,
+                        base_rect_size = base_size / 22) {
+  theme(
+    title = element_text(family = 'Arial', size = 18, color = 'black'),
+    text = element_text(family = 'Arial', size = 16, color = 'black'),
+    axis.title = element_text(family = 'Arial', size = 18, color = 'black'),
+    axis.text = element_text(family = 'Arial', size = 16, color = 'black'), 
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "white", colour = NA),
+    axis.line = element_line(colour = "black", size = rel(1)),
+    legend.background = element_rect(color = 'black'),
+    legend.title = element_text(family = 'Arial', size = 16),
+    legend.text = element_text(family = 'Arial', size = 14),
+    legend.direction = "vertical",
+    legend.box = c("horizontal", "vertical"),
+    legend.spacing.x = unit(0.1, 'cm'),
+    plot.margin = unit(c(0.25, 1, 1, 0.5), 'cm'),
+    axis.title.y = element_text(margin = margin(r = 10, unit = "pt")),
+    axis.text.x = element_text(angle = 90, hjust = 1)  # Move x-axis rotation here
+  )
+}
+
+```
+
+
+#01. Extract pseudobulk
+```{r}
+# Define gene sets and output directories
+gene_sets <- list(
+  "sharedAging" = list(
+    "gene_list" = "~/Library/Mobile Documents/com~apple~CloudDocs/Desktop/SKKU/Projects_SKKU/AD_Aging/02.gene_prioritization/merged_onlyGene_prioritiztion_sharedAging.txt",
+    "output_dir" = "~/Desktop/SKKU/Projects_SKKU/AD_Aging/04.cell_prop_trajectory/pseudo-bulk/sharedAging"
+  ),
+  "uniqueAD" = list(
+    "gene_list" = "~/Library/Mobile Documents/com~apple~CloudDocs/Desktop/SKKU/Projects_SKKU/AD_Aging/02.gene_prioritization/merged_onlyGene_prioritiztion_uniqueAD.txt",
+    "output_dir" = "~/Desktop/SKKU/Projects_SKKU/AD_Aging/04.cell_prop_trajectory/pseudo-bulk/uniqueAD"
+  )
+)
+
+# Set input directory
+input_dir <- "~/Desktop/IU/Projects_IU/ROSMAP/scRNA/pseudobulk/main_celltypes"
+
+# Get the list of input files
+file_list <- list.files(input_dir, pattern = "^merged_processed_data_withoutclustering_metadata_.*", full.names = TRUE)
+
+# Iterate through each gene set (sharedAging, uniqueAD)
+for (set_name in names(gene_sets)) {
+  gene_list_path <- gene_sets[[set_name]]$gene_list
+  output_dir <- gene_sets[[set_name]]$output_dir
+  
+  # Create output directory if it does not exist
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = TRUE)
+  }
+  
+  # Read the gene list
+  df_gene_list <- read.table(gene_list_path, header=1, sep = "\t")
+  gene_list <- df_gene_list$symbol
+  
+  # Filter and save files
+  for (file in file_list) {
+    # Load the data file
+    df <- read.table(file, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+    # Filter rows where row names match genes in the gene list
+    filtered_df <- df[rownames(df) %in% gene_list, ]
+
+    # Generate output file name
+    output_file <- file.path(output_dir, paste0(file_path_sans_ext(basename(file)), ".", set_name))
+
+    # Save the filtered data
+    write.table(filtered_df, file = output_file, sep = "\t", quote = FALSE, row.names = TRUE, col.names = TRUE)
+  }
+  
+  message("Filtering completed for ", set_name, ". Outputs saved in ", output_dir)
+}
+
+```
+
+
+#02.Trajectory analysis_ UMAP
+
+#02.1 import data
+```{r}
+# embeding data
+file_path="~/Desktop/SKKU/Projects_SKKU/AD_Aging/04.cell_prop_trajectory/green_supp_5.xlsx"
+sheets <- c("2D_landscape_embedding", "Palantir_trajectories")
+
+data_list <- lapply(sheets, function(sheet) {
+  read_excel(file_path, sheet = sheet)
+})
+
+merged_data <- Reduce(function(x, y) {
+  full_join(x, y, by = c("individualID"))
+}, data_list)
+
+```
+
+#02.2. UMAP (prAD, ABA) 
+```{r, fig.width= 5.5, fig.height=4}
+# Create a new column for color coding based on the difference between prAD and ABA
+merged_data <- merged_data %>%
+  mutate(color_group = case_when(
+    prAD > ABA & abs(prAD - ABA) > 0.1 ~ "prAD",
+    ABA > prAD & abs(prAD - ABA) > 0.1 ~ "ABA",
+    TRUE ~ "intermediate"
+  ))
+
+# Define custom colors for each group
+custom_colors <- c(
+  "prAD" = "#FF7F00",  
+  "ABA" = "#1F78B4",  
+  "intermediate" = "gray"       # Gray for similar values
+)
+
+# Create the UMAP dot plot
+p <- ggplot(merged_data, aes(x = PHATE_1, y = PHATE_2, color = color_group)) + 
+  geom_point(size = 3) + 
+  scale_color_manual(values = custom_colors) + 
+  theme_classic() +
+      theme(legend.position = "right",
+          legend.box = "horizontal",
+          legend.text = element_text(size = 10),
+          legend.title = element_text(size = 12),
+          legend.key.size = unit(0.5, "cm"),
+          axis.title.x = element_text(size = 12),
+          axis.title.y = element_text(size = 12),
+          plot.title = element_text(size = 20, face = "bold"), # Increase title size and center align
+          axis.text.x = element_text(size = 12),
+          axis.text.y = element_text(size = 12)) +
+    labs(x = "PHATE 1", y = "PHATE 2", color = "Group") +
+    ggtitle("Trajectories")+ 
+    theme_step1()
+
+
+# Print the plot
+print(p)
+
+output_path <- "/Users/minyoungcho/Desktop/SKKU/Projects_SKKU/AD_Aging/04.cell_prop_trajectory/plot/"
+
+file_name <- paste0(output_path, "/UMAP_prAD_ABA.pdf")
+pdf(file_name, width = 5.5, height = 4)  # Adjust width and height as needed
+print(p)
+dev.off()
+```
+
+#02.3. UMAP (clustering) 
+
+```{r, fig.width=5.5, fig.height=4}
+# Define a UMAP plot where colors are based on clusters
+p <- ggplot(merged_data, aes(x = PHATE_1, y = PHATE_2, color = cluster)) + 
+  geom_point(size = 3) + 
+  scale_color_brewer(palette = "Dark2") +  # Use a predefined color palette for clusters
+  theme_classic() + 
+    theme(legend.position = "right",
+          legend.box = "horizontal",
+          legend.text = element_text(size = 10),
+          legend.title = element_text(size = 12),
+          legend.key.size = unit(0.5, "cm"),
+          axis.title.x = element_text(size = 12),
+          axis.title.y = element_text(size = 12),
+          plot.title = element_text(size = 20, face = "bold"), # Increase title size and center align
+          axis.text.x = element_text(size = 12),
+          axis.text.y = element_text(size = 12)) +
+    labs(x = "PHATE 1", y = "PHATE 2", color = "Cluster") +
+    ggtitle("Cluster") + 
+    theme_step1()
+
+
+# Print the plot
+print(p)
+
+# Save the plot as a PDF
+output_path <- "/Users/minyoungcho/Desktop/SKKU/Projects_SKKU/AD_Aging/04.cell_prop_trajectory/plot/"
+file_name <- paste0(output_path, "UMAP_cluster.pdf")
+pdf(file_name, width = 5.5, height = 4)  # Adjust width and height as needed
+print(p)
+dev.off()
+```
+
+#03. Trajectory analysis _prioritized genes _UMAP
+
+#03.1. Shared Aging
+```{r}
+##make average expression
+#pseudo-bulk expression
+# Set the directory containing the files
+input_dir <- "~/Desktop/SKKU/Projects_SKKU/AD_Aging/04.cell_prop_trajectory/pseudo-bulk/sharedAging"
+
+# List all files in the directory
+file_list <- list.files(input_dir, full.names = TRUE, pattern = "^merged")
+
+# Read all files into a list of data frames
+data_list <- lapply(file_list, function(file) {
+  read.delim(file, header = TRUE, sep = "\t")
+})
+
+# Optionally, name each element of the list with the file names
+names(data_list) <- basename(file_list)
+
+# Initialize a list to store the means for each file
+sample_means_list <- lapply(data_list, function(df) {
+  # Calculate the mean expression for each sample (column-wise mean)
+  colMeans(df[-1]) # Exclude the first column (gene names)
+})
+
+# Combine the means into a single data frame
+result_df <- do.call(rbind, sample_means_list)
+# Clean up file names: Remove "merged_processed_data_withoutclustering_metadata_" and ".extracted"
+cleaned_names <- gsub("merged_processed_data_withoutclustering_metadata_|\\.424_pseudo_final|\\.extracted", "", names(data_list))
+
+# Set cleaned names as row names for identification
+rownames(result_df) <- cleaned_names
+
+# Transpose the result_df to match the format of merged_data
+transposed_result <- t(result_df)
+
+# Convert the transposed result to a data frame
+transposed_result_df <- as.data.frame(transposed_result)
+
+# Add a column for individualID (row names from the transposed result)
+transposed_result_df$individualID <- rownames(transposed_result_df)
+
+# Merge with merged_data on individualID
+merged_shared_data <- merge(merged_data, transposed_result_df, by = "individualID")
+
+colnames(merged_shared_data) <- gsub("\\.sharedAging$", "", colnames(merged_shared_data))
+
+# View the merged data
+head(merged_shared_data)
+```
+
+
+#03.2. Unique AD
+```{r}
+##make average expression
+#pseudo-bulk expression
+# Set the directory containing the files
+input_dir <- "~/Desktop/SKKU/Projects_SKKU/AD_Aging/04.cell_prop_trajectory/pseudo-bulk/uniqueAD"
+
+# List all files in the directory
+file_list <- list.files(input_dir, full.names = TRUE, pattern = "^merged")
+
+# Read all files into a list of data frames
+data_list <- lapply(file_list, function(file) {
+  read.delim(file, header = TRUE, sep = "\t")
+})
+
+# Optionally, name each element of the list with the file names
+names(data_list) <- basename(file_list)
+
+# Initialize a list to store the means for each file
+sample_means_list <- lapply(data_list, function(df) {
+  # Calculate the mean expression for each sample (column-wise mean)
+  colMeans(df[-1]) # Exclude the first column (gene names)
+})
+
+# Combine the means into a single data frame
+result_df <- do.call(rbind, sample_means_list)
+# Clean up file names: Remove "merged_processed_data_withoutclustering_metadata_" and ".extracted"
+cleaned_names <- gsub("merged_processed_data_withoutclustering_metadata_|\\.424_pseudo_final|\\.extracted", "", names(data_list))
+
+# Set cleaned names as row names for identification
+rownames(result_df) <- cleaned_names
+
+# Transpose the result_df to match the format of merged_data
+transposed_result <- t(result_df)
+
+# Convert the transposed result to a data frame
+transposed_result_df <- as.data.frame(transposed_result)
+
+# Add a column for individualID (row names from the transposed result)
+transposed_result_df$individualID <- rownames(transposed_result_df)
+
+# Merge with merged_data on individualID
+merged_unique_data <- merge(merged_data, transposed_result_df, by = "individualID")
+
+colnames(merged_unique_data) <- gsub("\\.uniqueAD$", "", colnames(merged_unique_data))
+
+
+# View the merged data
+head(merged_unique_data)
+```
+
+#03.3 UMAP
+
+```{r}
+# Define a function to create side-by-side UMAP plots
+create_combined_umap_plot <- function(cell_type, shared_data, unique_data, output_path) {
+  
+  # Create individual plots for SharedAging and UniqueAD
+  plot_shared <- ggplot(shared_data, aes(x = PHATE_1, y = PHATE_2)) + 
+    geom_point(aes(color = .data[[cell_type]]), size = 3) +
+    scale_color_gradient2(low = "#009e73", mid = "white", high = "#d55e00", 
+                          midpoint = median(shared_data[[cell_type]]), guide = "colorbar") +
+    theme_classic() +
+    theme(legend.position = "bottom",
+          legend.box = "horizontal",
+          legend.text = element_text(size = 10),
+          legend.title = element_text(size = 15),
+          legend.key.size = unit(0.5, "cm"),
+          axis.title.x = element_text(size = 15),
+          axis.title.y = element_text(size = 15),
+          plot.title = element_text(size = 15), 
+          axis.text.x = element_text(size = 15),
+          axis.text.y = element_text(size = 15)) +
+    labs(x = "PHATE 1", y = "PHATE 2", color = "Avg.expression") +
+    ggtitle("Shared aging")
+  
+  plot_unique <- ggplot(unique_data, aes(x = PHATE_1, y = PHATE_2)) + 
+    geom_point(aes(color = .data[[cell_type]]), size = 3) +
+    scale_color_gradient2(low = "#009e73", mid = "white", high = "#d55e00", 
+                          midpoint = median(unique_data[[cell_type]]), guide = "colorbar") +
+    theme_classic() +
+    theme(legend.position = "bottom",
+          legend.box = "horizontal",
+          legend.text = element_text(size = 10),
+          legend.title = element_text(size = 15),
+          legend.key.size = unit(0.5, "cm"),
+          axis.title.x = element_text(size = 15),
+          axis.title.y = element_text(size = 15),
+          plot.title = element_text(size = 15), 
+          axis.text.x = element_text(size = 15),
+          axis.text.y = element_text(size = 15)) +
+    labs(x = "PHATE 1", y = "PHATE 2", color = "Avg.expression",title = "Unique AD") +
+    ggtitle("Unique AD")
+  
+  cell_type_name <- gsub("_", " ", cell_type)
+  # Combine the two plots side by side with a main title
+  combined_plot <- grid.arrange(plot_shared, plot_unique, ncol = 2, 
+                                top = textGrob(paste(cell_type_name), gp = gpar(fontsize = 20, fontface = "bold")))
+  
+# Save the combined plot as a PDF using ggsave
+file_name <- paste0(output_path, "/", cell_type, "_SharedAging_vs_UniqueAD.pdf")
+ggsave(
+  filename = file_name,
+  plot = combined_plot,  # Specify the plot object to save
+  width = 8,            # Width of the saved plot in inches
+  height = 4,           # Height of the saved plot in inches
+  units = "in"          # Units for width and height (inches)
+)
+
+  return(combined_plot)
+
+}
+
+# Define output directory
+output_path <- "/Users/minyoungcho/Desktop/SKKU/Projects_SKKU/AD_Aging/04.cell_prop_trajectory/plot/comparison"
+
+# Ensure the output directory exists
+if (!dir.exists(output_path)) {
+  dir.create(output_path)
+}
+
+# Loop through cell types and create combined plots
+cell_types <- c("Astrocyte", "Excitatory_Neurons", "Inhibitory_Neurons", 
+                "Microglia", "Oligodendrocytes", "OPCs")
+
+# Loop through and generate plots
+for (cell_type in cell_types) {
+  combined_plot <- create_combined_umap_plot(cell_type, merged_shared_data, merged_unique_data, output_path)
+  plot_list[[cell_type]] <- combined_plot
+}
+
+# Combine all the individual plots into one big plot
+combined_plots_all <- grid.arrange(grobs = plot_list, ncol = 3)
+
+# Save the combined plot to a PDF file
+file_name_all <- paste0(output_path, "/All_Cell_Types_SharedAging_vs_UniqueAD.pdf")
+ggsave(filename = file_name_all, plot = combined_plots_all, width = 20, height = 10, units = "in")
+```
+
+#03.4 violine plot
+
+# significancy test
+```{r}
+# Define the output path
+output_path <- "/Users/minyoungcho/Desktop/SKKU/Projects_SKKU/AD_Aging/04.cell_prop_trajectory/plot/Violin_plot/"
+
+# Create output folder if it doesn't exist
+if (!dir.exists(output_path)) {
+  dir.create(output_path, recursive = TRUE)
+}
+
+# Select relevant data
+genes <- c("Astrocyte", "Excitatory_Neurons",  "Inhibitory_Neurons", 
+           "Microglia", "Oligodendrocytes", "OPCs")
+
+
+# Perform t-tests for ABA vs prAD and apply FDR correction for both datasets
+p_values_shared <- c()
+p_values_unique <- c()
+sig_labels_shared <- c()  # For Shared Aging significance labels
+sig_labels_unique <- c()  # For Unique AD significance labels
+
+for (gene in genes) {
+  # Extract expression data for the gene for Shared Aging
+  expr_aba_shared <- merged_shared_data %>% filter(color_group == "ABA") %>% pull(gene)
+  expr_prAD_shared <- merged_shared_data %>% filter(color_group == "prAD") %>% pull(gene)
+  
+  # Extract expression data for the gene for Unique AD
+  expr_aba_unique <- merged_unique_data %>% filter(color_group == "ABA") %>% pull(gene)
+  expr_prAD_unique <- merged_unique_data %>% filter(color_group == "prAD") %>% pull(gene)
+  
+  # Perform t-test for Shared Aging
+  t_test_shared <- t.test(expr_aba_shared, expr_prAD_shared, var.equal = FALSE)
+  
+  # Perform t-test for Unique AD
+  t_test_unique <- t.test(expr_aba_unique, expr_prAD_unique, var.equal = FALSE)
+  
+  # Store p-values for both datasets
+  p_values_shared <- c(p_values_shared, t_test_shared$p.value)
+  p_values_unique <- c(p_values_unique, t_test_unique$p.value)
+  
+  # Add significance label for Shared Aging based on p-value thresholds
+  if (t_test_shared$p.value < 0.001) {
+    sig_labels_shared <- c(sig_labels_shared, "***")
+  } else if (t_test_shared$p.value < 0.01) {
+    sig_labels_shared <- c(sig_labels_shared, "**")
+  } else if (t_test_shared$p.value < 0.05) {
+    sig_labels_shared <- c(sig_labels_shared, "*")
+  } else {
+    sig_labels_shared <- c(sig_labels_shared, "")
+  }
+  
+  # Add significance label for Unique AD based on p-value thresholds
+  if (t_test_unique$p.value < 0.001) {
+    sig_labels_unique <- c(sig_labels_unique, "***")
+  } else if (t_test_unique$p.value < 0.01) {
+    sig_labels_unique <- c(sig_labels_unique, "**")
+  } else if (t_test_unique$p.value < 0.05) {
+    sig_labels_unique <- c(sig_labels_unique, "*")
+  } else {
+    sig_labels_unique <- c(sig_labels_unique, "")
+  }
+}
+
+# FDR correction
+fdr_values_shared <- p.adjust(p_values_shared, method = "fdr")
+fdr_values_unique <- p.adjust(p_values_unique, method = "fdr")
+
+# Combine results into a data frame
+results <- data.frame(Cell_Type = genes, p_value_shared = p_values_shared, p_value_unique = p_values_unique, 
+                      fdr_shared = fdr_values_shared, fdr_unique = fdr_values_unique, 
+                      sig_shared = sig_labels_shared, sig_unique = sig_labels_unique)
+
+# Print results
+print(results)
+
+file_name <- paste0(output_path, "t_test_results.csv")
+write.csv(results, file = file_name, row.names = FALSE)
+```
+
+
+```{r, fig.width=8, fig.height=4}
+
+# Define colors
+colors <- c("ABA" = "#A6C8E3", "prAD" = "#FDBE85")
+
+# Create individual plots for each gene
+plot_list <- list()
+for (i in 1:length(genes)) {
+  gene <- genes[i]
+  sig_label_shared <- results$sig_shared[i]  # Get Shared Aging significance label
+  sig_label_unique <- results$sig_unique[i]  # Get Unique AD significance label
+  
+  # Left plot for merged_shared_data (Shared aging)
+  data_long_shared <- merged_shared_data %>%
+    filter(color_group %in% c("ABA", "prAD")) %>%
+    select(color_group, all_of(gene)) %>%
+    pivot_longer(cols = -color_group, names_to = "Cell_Type", values_to = "Expression")
+  
+  p_left <- ggplot(data_long_shared, aes(x = color_group, y = Expression, fill = color_group)) +
+    geom_violin(trim = FALSE, alpha = 0.5) +
+    geom_boxplot(width = 0.1, outlier.shape = NA) +
+    theme_step1() +
+    labs(title = "Shared aging", x = "", y = "Mean expression") +
+    scale_fill_manual(values = colors) +
+    theme(legend.position = "none") +
+    # Add significance label for Shared Aging
+    geom_text(x = 1.5, y = max(data_long_shared$Expression), label = sig_label_shared, size = 8)
+  
+  # Right plot for merged_unique_data (Unique AD)
+  data_long_unique <- merged_unique_data %>%
+    filter(color_group %in% c("ABA", "prAD")) %>%
+    select(color_group, all_of(gene)) %>%
+    pivot_longer(cols = -color_group, names_to = "Cell_Type", values_to = "Expression")
+  
+  p_right <- ggplot(data_long_unique, aes(x = color_group, y = Expression, fill = color_group)) +
+    geom_violin(trim = FALSE, alpha = 0.5) +
+    geom_boxplot(width = 0.1, outlier.shape = NA) +
+    theme_step1() +
+    labs(title = "Unique AD", x = "", y = "Mean expression") +
+    scale_fill_manual(values = colors) +
+    theme(legend.position = "none") +
+    # Add significance label for Unique AD
+    geom_text(x = 1.5, y = max(data_long_unique$Expression), label = sig_label_unique, size = 8)
+  
+  # Modify custom title by replacing underscores 
+  formatted_gene <-  gsub("_", " ", gene)
+  
+  # Custom title for combined plot with gene name
+  custom_title <- textGrob(formatted_gene, gp = gpar(fontsize = 18, fontface = "bold"))
+  
+  # Combine left and right plots with custom title for each gene
+  combined_plot <- grid.arrange(p_left, p_right, ncol = 2, top = custom_title)
+  plot_list[[gene]] <- combined_plot
+  
+    # Save each plot to the specified folder
+  file_name <- paste0(output_path, "Violin_plot_", gene, "_SharedAging_vs_UniqueAD.pdf")
+  ggsave(
+    filename = file_name,
+    plot = combined_plot,  # Specify the plot object to save
+    width = 8,             # Width of the saved plot in inches
+    height = 4,            # Height of the saved plot in inches
+    units = "in"           # Units for width and height (inches)
+  )
+
+}
+
+# Display all plots
+combined_plots_all <- grid.arrange(grobs = plot_list, ncol = 3)
+
+file_name <- paste0(output_path, "Violin_plot_all_SharedAging_vs_UniqueAD.pdf")
+ggsave(
+  filename = file_name,
+  plot = combined_plots_all,
+  width = 20,             # Adjust the width to fit all plots in a row
+  height = 10,            # Adjust the height to fit the plots vertically
+  units = "in"           # Units for width and height (inches)
+)
+```
