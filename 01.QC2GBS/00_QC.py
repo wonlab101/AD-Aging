@@ -1,9 +1,5 @@
-## 2024.11.12
-
-
 import csv
 from tqdm import tqdm
-
 
 aa = "/data1/hyejin/Practice/GBS/data/mvAge.summary.EUR.txt"
 with open(aa, 'r') as f1, open("/data1/hyejin/Practice/GBS/data/Aging.txt", 'wt', newline='') as f2:
