@@ -1,5 +1,3 @@
-## (Updated) 2025.02.14
-
 library(GenomicSEM)
 library(data.table)
 library(dplyr)
