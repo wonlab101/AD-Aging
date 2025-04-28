@@ -1,5 +1,3 @@
-## 2025-03-20
-
 setwd("/data1/hyejin/Practice/GBS/")
 library(data.table)
 library(dplyr)
