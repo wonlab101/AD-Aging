@@ -5,10 +5,10 @@ library(data.table)
 library(dplyr)
 setwd("/data1/hyejin/Practice/GBS/v1")
 
-## (2) Multivariable LD score regression 진행
+## (2) Multivariable LD score regression 
 traits <- c("Aging.sumstats.gz", "AD.sumstats.gz")
 sample.prev <- c(NA, NA)
-population.prev <- c(NA, NA)   ## population prevalence?
+population.prev <- c(NA, NA) 
 
 ld <- "/data1/hyejin/Tool/LDSC/eur_w_ld_chr/"
 wld <- "/data1/hyejin/Tool/LDSC/eur_w_ld_chr/"
