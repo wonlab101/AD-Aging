@@ -1,5 +1,3 @@
-## (Updated) 2025-02-14
-
 setwd("/data1/hyejin/Practice/GBS/data")
 getwd()
 
