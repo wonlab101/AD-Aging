@@ -1,10 +1,7 @@
-## 2024.11.12
-
 library(GenomicSEM)
 library(data.table)
 library(dplyr)
 setwd("/data1/hyejin/Practice/GBS/v1")
-
 
 ## (1) Munging files
 
