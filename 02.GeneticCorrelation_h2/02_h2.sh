@@ -19,25 +19,27 @@ workf=/data1/hyejin/Practice/GBS
 ldsc=/data1/hyejin/Tool/LDSC
 ld=/data1/hyejin/GLGCgSEM/LDSC/eur_w_ld_chr/
 
-# Set version and define factors
-version="v2"
+# Set versions and factors
+versions=("v1" "v2")
 factors=("factor1" "factor2")
 
-# Loop over factors only
-for factor in "${factors[@]}"; do
-  sumstat="AD_aging_GBS_${version}_${factor}"
+# Loop over versions and factors
+for version in "${versions[@]}"; do
+  for factor in "${factors[@]}"; do
+    sumstat="AD_aging_GBS_${version}_${factor}"
 
-  echo "###============ start !"
-  echo "Processing tag: ${sumstat}"
+    echo "###============ start !"
+    echo "Processing tag: ${sumstat}"
 
-  inf="${workf}/${version}/ldsc/${sumstat}_ldscoutput.sumstats.gz"
-  outf="${workf}/${version}/ldsc/${sumstat}_h2"
+    inf="${workf}/${version}/ldsc/${sumstat}_ldscoutput.sumstats.gz"
+    outf="${workf}/${version}/ldsc/${sumstat}_h2"
 
-  python2 ${ldsc}/ldsc/ldsc.py \
-      --h2 ${inf} \
-      --ref-ld-chr ${ld} \
-      --w-ld-chr ${ld} \
-      --out ${outf}
+    python2 ${ldsc}/ldsc/ldsc.py \
+        --h2 ${inf} \
+        --ref-ld-chr ${ld} \
+        --w-ld-chr ${ld} \
+        --out ${outf}
 
-  echo "###============ Done !"
+    echo "###============ Done !"
+  done
 done
