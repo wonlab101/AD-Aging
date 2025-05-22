@@ -19,24 +19,26 @@ workf=/data1/hyejin/Practice/GBS
 ldsc=/data1/hyejin/Tool/LDSC
 snplist="/data1/hyejin/CreativityGWAS/LDSC/1.data/w_hm3.snplist"
 
-# Only use version v2
-version="v2"
+# Use both versions
+versions=("v1" "v2")
 factors=("factor1" "factor2")
 
-for factor in "${factors[@]}"; do
-  sumstat="AD_aging_GBS_${version}_${factor}"
+for version in "${versions[@]}"; do
+  for factor in "${factors[@]}"; do
+    sumstat="AD_aging_GBS_${version}_${factor}"
 
-  echo "###============ start !"
-  echo "Processing tag: ${sumstat}"
+    echo "###============ start !"
+    echo "Processing tag: ${sumstat}"
 
-  inf="${workf}/${version}/ldsc/${sumstat}_ldscinput"
-  outf="${workf}/${version}/ldsc/${sumstat}_ldscoutput"
+    inf="${workf}/${version}/ldsc/${sumstat}_ldscinput"
+    outf="${workf}/${version}/ldsc/${sumstat}_ldscoutput"
 
-  python2 ${ldsc}/ldsc/munge_sumstats.py \
-      --sumstats ${inf} \
-      --out ${outf} \
-      --merge-alleles ${snplist} \
-      --chunksize 500000
+    python2 ${ldsc}/ldsc/munge_sumstats.py \
+        --sumstats ${inf} \
+        --out ${outf} \
+        --merge-alleles ${snplist} \
+        --chunksize 500000
 
-  echo "###============ Done !"
+    echo "###============ Done !"
+  done
 done
